@@ -3,6 +3,62 @@ import pandas as pd
 import numpy as np
 from datetime import date
 import re
+import base64
+from fpdf import FPDF
+import tempfile
+import os
+
+# PDFレポート生成クラス
+class ReportPDF(FPDF):
+    def __init__(self):
+        super().__init__()
+        self.set_auto_page_break(auto=True, margin=15)
+        self.add_page()
+        self.set_font("Arial", size=10)
+        
+    def header(self):
+        # ヘッダーに歯科ロゴと日付を追加
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, '歯科エビデンス生成システム', 0, 1, 'C')
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 5, f'作成日: {date.today().strftime("%Y年%m月%d日")}', 0, 1, 'R')
+        self.ln(5)
+        
+    def footer(self):
+        # フッターにページ番号を追加
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'ページ {self.page_no()}', 0, 0, 'C')
+    
+    def chapter_title(self, title):
+        # セクションタイトル
+        self.set_font('Arial', 'B', 12)
+        self.set_fill_color(200, 220, 255)
+        self.cell(0, 6, title, 0, 1, 'L', 1)
+        self.ln(4)
+        
+    def chapter_body(self, body):
+        # 本文テキスト
+        self.set_font('Arial', '', 10)
+        self.multi_cell(0, 5, body)
+        self.ln()
+        
+    def print_risk_item(self, risk, level="低"):
+        # リスク項目を出力（色付き）
+        level_colors = {
+            "高": (255, 100, 100),
+            "中": (255, 200, 100),
+            "低": (100, 200, 100)
+        }
+        color = level_colors.get(level, (0, 0, 0))
+        
+        self.set_text_color(*color)
+        self.set_font('Arial', 'B', 10)
+        self.cell(15, 5, f"[{level}]", 0, 0)
+        self.set_text_color(0, 0, 0)
+        self.set_font('Arial', '', 10)
+        self.multi_cell(0, 5, risk)
+        self.ln(2)
 
 # 論文データ読み込み
 papers = pd.read_csv('papers.csv')
@@ -41,10 +97,109 @@ timing_benefits = pd.DataFrame({
         '顎の成長がまだ続いており、比較的効率的な矯正が可能。将来的な歯列問題を75%予防可能。',
         '歯の移動は可能だが、治療期間が長くなる傾向。将来的な歯列問題を60%予防可能。',
         '歯周組織の状態によっては制限あり。治療期間が50%延長。将来的な歯列問題を40%予防可能。',
-        '専門医評価必須。歯周病や骨粗鬆症などの影響で治療オプションが制限される可能性。治療期間が2倍に延長。'
+        '歯周病や骨粗鬆症などの影響で治療オプションが制限される可能性。治療期間が2倍に延長。'
     ],
     'recommendation_level': ['最適', '推奨', '適応', '条件付き推奨', '専門医評価必須']
 })
+
+# PDFをダウンロード可能な形式に変換する関数
+def create_download_link(pdf_bytes, filename):
+    b64 = base64.b64encode(pdf_bytes).decode()
+    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">PDFをダウンロード</a>'
+
+# レポート内容からPDFを生成する関数
+def generate_pdf(report_data, age, gender, issues, high_risks):
+    pdf = ReportPDF()
+    
+    # タイトルページ
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(0, 10, '歯科リスク評価レポート', 0, 1, 'C')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 10, f'患者情報: {age}歳, {gender}', 0, 1, 'C')
+    pdf.cell(0, 10, f'評価日: {date.today().strftime("%Y年%m月%d日")}', 0, 1, 'C')
+    
+    # 高リスク項目サマリー
+    if high_risks:
+        pdf.add_page()
+        pdf.chapter_title('注意すべき高リスク項目')
+        for risk in high_risks:
+            pdf.print_risk_item(risk, "高")
+    
+    # 矯正タイミング評価
+    pdf.add_page()
+    pdf.chapter_title('矯正タイミング評価')
+    
+    # 患者の年齢に基づいたリスク評価
+    applicable_thresholds = ortho_age_risks[ortho_age_risks['age_threshold'] >= age]
+    
+    if not applicable_thresholds.empty:
+        next_threshold = applicable_thresholds.iloc[0]
+        pdf.set_text_color(255, 0, 0)  # 赤色で警告
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 6, '⚠️ 矯正タイミング警告:', 0, 1)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font('Arial', '', 10)
+        pdf.multi_cell(0, 5, next_threshold['description'])
+        pdf.ln(5)
+        
+        # 年齢グループに基づいた推奨情報
+        age_group_idx = min(len(timing_benefits) - 1, age // 13)
+        benefit_info = timing_benefits.iloc[age_group_idx]
+        
+        pdf.set_font('Arial', 'B', 11)
+        pdf.cell(0, 6, f"現在の年齢グループ: {benefit_info['age_group']}", 0, 1)
+        pdf.cell(0, 6, f"推奨レベル: {benefit_info['recommendation_level']}", 0, 1)
+        pdf.set_font('Arial', '', 10)
+        pdf.multi_cell(0, 5, f"メリット: {benefit_info['benefit']}")
+    else:
+        # 高齢の場合
+        pdf.chapter_body("注意: 現在の年齢では標準的な矯正治療に制限がある可能性があります。専門医との詳細な相談を推奨します。")
+    
+    # 各歯列問題の詳細リスク評価
+    for issue in issues:
+        pdf.add_page()
+        pdf.chapter_title(f'{issue}のリスク評価')
+        
+        # 矯正による改善効果
+        benefit_info = ortho_benefits[ortho_benefits['issue'] == issue].iloc[0]['effect']
+        pdf.set_font('Arial', 'B', 11)
+        pdf.cell(0, 6, '矯正による改善効果:', 0, 1)
+        pdf.set_font('Arial', '', 10)
+        pdf.multi_cell(0, 5, benefit_info)
+        pdf.ln(5)
+        
+        # 関連リスク
+        filtered = papers[papers['issue'] == issue]
+        for _, row in filtered.iterrows():
+            risk_text = row['risk_description']
+            try:
+                numbers = re.findall(r'\d+\.?\d*', risk_text)
+                risk_value = float(numbers[0]) if numbers else 0
+            except:
+                risk_value = 0
+            
+            # リスクレベル
+            risk_level = "高" if risk_value > 40 else "中" if risk_value > 20 else "低"
+            pdf.print_risk_item(risk_text, risk_level)
+            
+            # 引用情報
+            pdf.set_font('Arial', 'I', 8)
+            pdf.cell(0, 5, f"参考文献: DOI: {row['doi']}", 0, 1)
+            pdf.ln(2)
+    
+    # 矯正しない場合の将来リスク
+    pdf.add_page()
+    pdf.chapter_title('矯正しない場合の長期リスク')
+    
+    future_risks = []
+    for _, risk in ortho_age_risks.iterrows():
+        if risk['age_threshold'] > age:
+            years_until = risk['age_threshold'] - age
+            future_risk = f"{years_until}年後 ({risk['age_threshold']}歳時点): {risk['description']}"
+            pdf.print_risk_item(future_risk, "高" if risk['tooth_loss_risk'] > 30 else "中")
+    
+    # 生成したPDFを返す
+    return pdf.output(dest='S').encode('latin1')  # バイト配列として出力
 
 # タイトル表示
 st.title('🦷 歯科エビデンス生成システム')
@@ -267,5 +422,13 @@ if submitted:
             })
             st.table(timing_display)
         
-        # ダウンロードボタン
-        st.download_button("レポートをダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
+        # PDF生成とダウンロードリンク
+        try:
+            pdf_bytes = generate_pdf(report, age, gender, issues, high_risks)
+            st.markdown(create_download_link(pdf_bytes, f"歯科リスク評価_{today}.pdf"), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"PDFの生成中にエラーが発生しました: {str(e)}")
+            st.info("代わりにマークダウン形式でダウンロードできます")
+        
+        # マークダウンのダウンロードボタン（バックアップとして残す）
+        st.download_button("レポートをマークダウンでダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
