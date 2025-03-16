@@ -228,7 +228,7 @@ economic_impact = pd.DataFrame({
 })
 
 # HTMLレポートを生成する関数
-def generate_html_report(age, gender, issues, report_items, high_risks, necessity_score, economic_benefits, scenarios, additional_notes=""):
+def generate_html_report(age, gender, issues, report_items, high_risks, necessity_score, economic_benefits, scenarios, show_recommendations=True, additional_notes=""):
     today = date.today().strftime("%Y年%m月%d日")
     
     # リスクレベルに応じたスタイル
