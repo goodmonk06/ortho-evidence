@@ -3,6 +3,27 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import re
 import time
+import os
+import streamlit as st
+
+# APIキーを取得する関数
+def get_api_key():
+    """
+    APIキーを環境変数またはStreamlitシークレットから取得します。
+    
+    Returns:
+    --------
+    str or None
+        APIキー、見つからない場合はNone
+    """
+    # 1. Streamlit Cloudsのシークレットから取得を試みる
+    try:
+        return st.secrets.get("NCBI_API_KEY")
+    except:
+        pass
+    
+    # 2. 環境変数から取得を試みる
+    return os.environ.get("NCBI_API_KEY")
 
 def fetch_pubmed_studies(keywords, max_results=20, days_recent=90):
     """
@@ -25,6 +46,9 @@ def fetch_pubmed_studies(keywords, max_results=20, days_recent=90):
     # PubMed検索用のベースURL
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     
+    # APIキーの取得
+    api_key = get_api_key()
+    
     # リクエストパラメータ設定
     params = {
         'db': 'pubmed',
@@ -34,8 +58,11 @@ def fetch_pubmed_studies(keywords, max_results=20, days_recent=90):
         'reldate': days_recent,
         'datetype': 'pdat',
         'retmode': 'json',
-        # 'api_key': 'YOUR_API_KEY'  # APIキーがある場合はコメントを外す
     }
+    
+    # APIキーがある場合は追加
+    if api_key:
+        params['api_key'] = api_key
     
     try:
         # PubMed APIへリクエスト送信
@@ -71,13 +98,19 @@ def get_pubmed_article_details(pmid_list):
     # カンマ区切りのPMIDリスト作成
     pmids = ','.join(pmid_list)
     
+    # APIキーの取得
+    api_key = get_api_key()
+    
     # リクエストパラメータ設定
     params = {
         'db': 'pubmed',
         'id': pmids,
         'retmode': 'xml',
-        # 'api_key': 'YOUR_API_KEY'  # APIキーがある場合はコメントを外す
     }
+    
+    # APIキーがある場合は追加
+    if api_key:
+        params['api_key'] = api_key
     
     try:
         # PubMed APIへリクエスト送信
@@ -176,21 +209,10 @@ def get_pubmed_article_details(pmid_list):
         print(f"PubMed 詳細取得APIエラー: {e}")
         return []
 
+# 以下の関数は変更なし
 def determine_study_type(title, abstract):
     """
     タイトルと抄録から研究タイプを推測します。
-    
-    Parameters:
-    -----------
-    title : str
-        論文のタイトル
-    abstract : str
-        論文の抄録
-        
-    Returns:
-    --------
-    str
-        推測された研究タイプ
     """
     text = (title + " " + abstract).lower()
     
@@ -232,16 +254,6 @@ def determine_study_type(title, abstract):
 def map_study_type_to_evidence_level(study_type):
     """
     研究タイプからエビデンスレベルへのマッピング
-    
-    Parameters:
-    -----------
-    study_type : str
-        研究タイプ
-        
-    Returns:
-    --------
-    str
-        エビデンスレベル（1a, 1b, 2a, 2b, 3, 4, 5）
     """
     evidence_levels = {
         "meta-analysis": "1a",  # 最高レベル: メタ分析、システマティックレビュー
@@ -260,22 +272,6 @@ def map_study_type_to_evidence_level(study_type):
 def classify_dental_issue(title, abstract, keywords, mesh_terms):
     """
     論文タイトル、抄録、キーワード、MeSH用語から歯列問題を分類します。
-    
-    Parameters:
-    -----------
-    title : str
-        論文のタイトル
-    abstract : str
-        論文の抄録
-    keywords : str
-        論文のキーワード
-    mesh_terms : str
-        論文のMeSH用語
-        
-    Returns:
-    --------
-    str
-        分類された歯列問題のカテゴリ
     """
     text = (title + " " + abstract + " " + keywords + " " + mesh_terms).lower()
     
@@ -300,16 +296,6 @@ def classify_dental_issue(title, abstract, keywords, mesh_terms):
 def extract_sample_size(abstract):
     """
     抄録からサンプルサイズを抽出する試みをします。
-    
-    Parameters:
-    -----------
-    abstract : str
-        論文の抄録
-        
-    Returns:
-    --------
-    int or None
-        抽出されたサンプルサイズ、抽出できない場合はNone
     """
     if not abstract:
         return None
@@ -335,16 +321,6 @@ def extract_sample_size(abstract):
 def extract_confidence_interval(abstract):
     """
     抄録から信頼区間を抽出する試みをします。
-    
-    Parameters:
-    -----------
-    abstract : str
-        論文の抄録
-        
-    Returns:
-    --------
-    str or None
-        抽出された信頼区間、抽出できない場合はNone
     """
     if not abstract:
         return None
@@ -370,16 +346,6 @@ def extract_confidence_interval(abstract):
 def determine_age_group(abstract):
     """
     抄録から年齢グループを判定します。
-    
-    Parameters:
-    -----------
-    abstract : str
-        論文の抄録
-        
-    Returns:
-    --------
-    str
-        判定された年齢グループ
     """
     if not abstract:
         return "全年齢"
@@ -459,18 +425,6 @@ def determine_age_group(abstract):
 def extract_risk_description(title, abstract):
     """
     タイトルと抄録からリスク記述を抽出します。
-    
-    Parameters:
-    -----------
-    title : str
-        論文のタイトル
-    abstract : str
-        論文の抄録
-        
-    Returns:
-    --------
-    str
-        抽出されたリスク記述
     """
     if not abstract:
         return title
@@ -504,18 +458,6 @@ def extract_risk_description(title, abstract):
 def update_papers_csv(new_articles, csv_file='papers.csv'):
     """
     新しい論文データをCSVファイルに追加または更新します。
-    
-    Parameters:
-    -----------
-    new_articles : list of dict
-        新しい論文の詳細情報を含む辞書のリスト
-    csv_file : str
-        更新するCSVファイルのパス
-        
-    Returns:
-    --------
-    pd.DataFrame
-        更新されたデータフレーム
     """
     try:
         # 既存のCSVを読み込むか、新しいデータフレームを作成
@@ -593,20 +535,6 @@ def update_papers_csv(new_articles, csv_file='papers.csv'):
 def render_evidence_level_badge(evidence_level, study_type="", sample_size=""):
     """
     エビデンスレベルを視覚的に表示するHTMLを生成します。
-    
-    Parameters:
-    -----------
-    evidence_level : str
-        エビデンスレベル（1a, 1b, 2a, 2b, 3, 4, 5）
-    study_type : str
-        研究タイプ
-    sample_size : str
-        サンプルサイズ
-        
-    Returns:
-    --------
-    str
-        HTMLコード
     """
     # エビデンスレベルによる色と説明のマッピング
     level_colors = {
