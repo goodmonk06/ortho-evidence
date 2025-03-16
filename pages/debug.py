@@ -155,21 +155,26 @@ with st.expander("2. テスト検索実行", expanded=True):
             if result["status"] == "success":
                 st.success(result["message"])
                 
-                # 取得した論文情報を表示
+                # 取得した論文情報を表示 (修正版: ネストしたexpanderを使わない)
                 articles = result["details"]
                 for i, article in enumerate(articles):
-                    with st.expander(f"論文 {i+1}: {article.get('title', '不明')}"):
-                        st.write(f"**著者:** {article.get('authors', '不明')}")
-                        st.write(f"**掲載誌:** {article.get('journal', '不明')} ({article.get('publication_year', '不明')})")
-                        st.write(f"**DOI:** {article.get('doi', '不明')}")
-                        st.write(f"**PMID:** {article.get('pmid', '不明')}")
-                        st.write(f"**研究タイプ:** {article.get('study_type', '不明')}")
-                        st.write(f"**URL:** [PubMed]({article.get('url', '#')})")
-                        
-                        # 抄録の表示（長い場合は折りたたみ可能に）
-                        if 'abstract' in article and article['abstract']:
-                            with st.expander("抄録"):
-                                st.write(article['abstract'])
+                    # 論文タイトルと基本情報
+                    st.markdown(f"### 論文 {i+1}: {article.get('title', '不明')}")
+                    st.markdown(f"**著者:** {article.get('authors', '不明')}")
+                    st.markdown(f"**掲載誌:** {article.get('journal', '不明')} ({article.get('publication_year', '不明')})")
+                    st.markdown(f"**DOI:** {article.get('doi', '不明')}")
+                    st.markdown(f"**PMID:** {article.get('pmid', '不明')}")
+                    st.markdown(f"**研究タイプ:** {article.get('study_type', '不明')}")
+                    st.markdown(f"**URL:** [PubMed]({article.get('url', '#')})")
+                    
+                    # 抄録の表示（エクスパンダーではなくチェックボックスと条件付き表示を使用）
+                    if 'abstract' in article and article['abstract']:
+                        show_abstract = st.checkbox(f"抄録を表示 (論文 {i+1})", key=f"abstract_{i}")
+                        if show_abstract:
+                            st.markdown("**抄録:**")
+                            st.markdown(f"```\n{article['abstract']}\n```")
+                    
+                    st.markdown("---")  # 論文間の区切り線
             elif result["status"] == "warning":
                 st.warning(result["message"])
                 st.code(result["details"])
@@ -195,8 +200,10 @@ with st.expander("3. 論文データベース確認", expanded=True):
             st.write("**エビデンスレベル分布:**")
             st.bar_chart(evidence_counts)
         
-        # データベースプレビュー
-        with st.expander("データベース内容プレビュー"):
+        # データベースプレビュー (ネストなしで表示)
+        st.markdown("### データベース内容プレビュー")
+        show_preview = st.checkbox("データベース内容を表示", value=False)
+        if show_preview:
             st.dataframe(papers_df)
     except Exception as e:
         st.error(f"論文データベース読み込みエラー: {str(e)}")
