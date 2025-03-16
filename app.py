@@ -30,18 +30,19 @@ ortho_age_risks = pd.DataFrame({
     ]
 })
 
-# 問題別矯正効果データ（修正版 - 明示的に問題を列挙）
+# 問題別矯正効果データ（修正版 - 「その他の歯列問題」を追加）
 ortho_benefits = pd.DataFrame({
-    'issue': ['叢生', '開咬', '過蓋咬合', '交叉咬合', '上顎前突', '下顎前突'],
+    'issue': ['叢生', '開咬', '過蓋咬合', '交叉咬合', '上顎前突', '下顎前突', 'その他の歯列問題'],
     'effect': [
         '叢生を矯正することで、齲蝕リスクが38%減少、歯周病リスクが45%減少します。',
         '開咬を矯正することで、前歯部齲蝕リスクが58%減少、発音障害が90%改善します。',
         '過蓋咬合を矯正することで、臼歯部破折リスクが65%減少、顎関節症リスクが55%減少します。',
         '交叉咬合を矯正することで、顎発育異常リスクが85%減少、咀嚼効率が40%向上します。',
         '上顎前突を矯正することで、外傷リスクが75%減少、審美性が大幅に向上します。',
-        '下顎前突を矯正することで、咀嚼障害が70%改善、発音明瞭度が30%向上します。'
+        '下顎前突を矯正することで、咀嚼障害が70%改善、発音明瞭度が30%向上します。',
+        '歯列問題を矯正することで、全般的に口腔衛生が向上し、齲蝕・歯周病リスクが減少します。また、咀嚼効率の向上や審美性の改善も期待できます。'
     ],
-    'severity_score': [70, 65, 60, 65, 55, 60]  # 問題の重大度スコア（100点満点）
+    'severity_score': [70, 65, 60, 65, 55, 60, 50]  # 問題の重大度スコア（100点満点）
 })
 
 # 矯正メリットのタイミングデータ（新規追加）
@@ -560,9 +561,15 @@ def generate_html_report(age, gender, issues, report_items, high_risks, necessit
         if not filtered.empty:
             html += f'<div class="section"><h2>{issue}のリスク評価</h2>'
             
-            # 矯正による改善効果
-            benefit_info = ortho_benefits[ortho_benefits['issue'] == issue].iloc[0]['effect']
-            html += f'<div class="benefit"><strong>矯正による改善効果:</strong> {benefit_info}</div>'
+            # 矯正による改善効果の追加（修正版）
+if show_recommendations:
+    benefit_df = ortho_benefits[ortho_benefits['issue'] == issue]
+    if not benefit_df.empty:
+        benefit_info = benefit_df.iloc[0]['effect']
+        report.append(f"**矯正による改善効果:** {benefit_info}")
+    else:
+        # 「その他の歯列問題」などのデフォルトメッセージ
+        report.append(f"**矯正による改善効果:** この歯列問題には個別の研究に基づいた具体的なデータが利用できません。専門医との詳細な相談をお勧めします。")
             
             # リスク項目（エビデンスレベル付き）
             for _, row in filtered.iterrows():
