@@ -5,10 +5,19 @@ from datetime import date
 import re
 import base64
 
+# PubMed API連携モジュールをインポート
+from pubmed_api import (
+    fetch_pubmed_studies, 
+    get_pubmed_article_details, 
+    update_papers_csv,
+    render_evidence_level_badge,
+    map_study_type_to_evidence_level
+)
+
 # 論文データ読み込み
 papers = pd.read_csv('papers.csv')
 
-# 年齢別矯正リスクデータ
+# 年齢別矯正リスクデータ（新規追加）
 ortho_age_risks = pd.DataFrame({
     'age_threshold': [12, 18, 25, 40, 60],
     'tooth_loss_risk': [5, 15, 30, 45, 60],
@@ -21,7 +30,7 @@ ortho_age_risks = pd.DataFrame({
     ]
 })
 
-# 問題別矯正効果データ
+# 問題別矯正効果データ（新規追加）
 ortho_benefits = pd.DataFrame({
     'issue': papers['issue'].unique(),
     'effect': [
@@ -35,7 +44,7 @@ ortho_benefits = pd.DataFrame({
     'severity_score': [70, 65, 60, 65, 55, 60]  # 問題の重大度スコア（100点満点）
 })
 
-# 矯正メリットのタイミングデータ
+# 矯正メリットのタイミングデータ（新規追加）
 timing_benefits = pd.DataFrame({
     'age_group': ['小児期 (7-12歳)', '青年期 (13-18歳)', '成人期前半 (19-35歳)', '成人期後半 (36-60歳)', '高齢期 (61歳以上)'],
     'benefit': [
@@ -64,14 +73,6 @@ future_scenarios = pd.DataFrame({
     ]
 })
 
-# 経済的影響データ（新規追加）
-economic_impact = pd.DataFrame({
-    'age_group': ['小児期 (7-12歳)', '青年期 (13-18歳)', '成人期前半 (19-35歳)', '成人期後半 (36-60歳)', '高齢期 (61歳以上)'],
-    'current_cost': [300000, 350000, 400000, 450000, 500000],  # 現在の矯正費用（円）
-    'future_savings': [1500000, 1200000, 900000, 600000, 300000],  # 将来的な医療費削減額（円）
-    'roi': [400, 250, 125, 35, 0]  # 投資収益率（％）
-})
-
 # リスク閾値の設定値（ラジオボタン用）
 risk_thresholds = {
     "標準": 30,
@@ -79,49 +80,103 @@ risk_thresholds = {
     "緩和": 40
 }
 
-# 矯正必要性スコア計算関数（新規追加）
+# 矯正必要性スコア計算関数（改良版）
 def calculate_ortho_necessity_score(age, issues):
-    # 基本スコア（最大100点）
-    base_score = 50
-    
-    # 1. 年齢によるタイミングスコア（最大30点）
-    age_group_idx = min(len(timing_benefits) - 1, age // 13)
-    timing_score = timing_benefits.iloc[age_group_idx]['timing_score'] / 100 * 30
+    # 1. 年齢によるタイミングスコア（最大35点）
+    # より細かい年齢に基づくスコア計算
+    if age <= 12:
+        # 小児期：最適な時期（満点）
+        timing_score = 35
+    elif age <= 18:
+        # 青年期：まだ効果的
+        timing_score = 30
+    elif age <= 25:
+        # 若年成人期：効果あり
+        timing_score = 25
+    elif age <= 40:
+        # 成人期：効果は減少
+        timing_score = 20
+    elif age <= 60:
+        # 成人後期：効果は限定的
+        timing_score = 15
+    else:
+        # 高齢期：効果は最小
+        timing_score = 10
     
     # 2. 問題の重大性によるスコア（最大40点）
     severity_score = 0
     if issues:
-        issue_scores = [ortho_benefits[ortho_benefits['issue'] == issue]['severity_score'].values[0] 
-                        for issue in issues if not ortho_benefits[ortho_benefits['issue'] == issue].empty]
+        # 問題ごとのスコアを収集
+        issue_scores = []
+        for issue in issues:
+            if not ortho_benefits[ortho_benefits['issue'] == issue].empty:
+                score = ortho_benefits[ortho_benefits['issue'] == issue]['severity_score'].values[0]
+                issue_scores.append(score)
+        
         if issue_scores:
-            # 最も重大な問題のスコアを基準に
-            severity_score = max(issue_scores) / 100 * 40
+            # 主要な問題のスコア
+            primary_issue_score = max(issue_scores)
+            
+            # 複数の問題による累積効果（最大の問題 + 追加問題の影響）
+            if len(issue_scores) > 1:
+                # 主要問題以外のスコアを合計し、スケーリング
+                secondary_issues_score = sum(sorted(issue_scores)[:-1]) * 0.5
+                severity_score = min(40, (primary_issue_score + secondary_issues_score) / 100 * 40)
+            else:
+                severity_score = primary_issue_score / 100 * 40
     
-    # 3. 将来リスクによるスコア（最大30点）
+    # 3. 将来リスクによるスコア（最大35点、増加）
     risk_score = 0
     applicable_thresholds = ortho_age_risks[ortho_age_risks['age_threshold'] >= age]
+    
     if not applicable_thresholds.empty:
         next_threshold = applicable_thresholds.iloc[0]
-        # 次の閾値までの時間が短いほどスコアが高い
-        time_factor = 1 - min(1, (next_threshold['age_threshold'] - age) / 20)
-        risk_score = time_factor * next_threshold['tooth_loss_risk'] / 100 * 30
+        
+        # 年齢依存リスク：次の閾値に近いほどスコアが高い
+        years_until = next_threshold['age_threshold'] - age
+        urgency_factor = max(0, 1 - (years_until / 15))  # 15年以内なら影響あり
+        
+        # 喪失リスク：リスク値が高いほどスコアが高い
+        risk_value = next_threshold['tooth_loss_risk']
+        
+        # 問題数による修正係数：問題が多いほどリスクが高い
+        problem_factor = min(1.5, 1 + (len(issues) - 1) * 0.1)
+        
+        # 将来リスクスコアの計算（年齢、リスク値、問題数を考慮）
+        risk_score = urgency_factor * (risk_value / 60) * problem_factor * 35
     
-    # 合計スコア（年齢が高いほど緊急性が高いため、若年層では減点）
+    # 合計スコア（より広い範囲）
     total_score = timing_score + severity_score + risk_score
     
+    # 小児・青年期の特別調整：若年層では将来的な予防が重要なため、スコアを加点
+    if age <= 18:
+        prevention_bonus = max(0, (18 - age)) * 0.5
+        total_score += prevention_bonus
+    
+    # 成人期の特別調整：問題が累積しやすい時期のためスコアを加点
+    if 35 <= age <= 55 and len(issues) >= 2:
+        adult_complexity_bonus = (len(issues) - 1) * 2
+        total_score += adult_complexity_bonus
+    
+    # スコアの上限と下限を設定
+    total_score = max(10, min(100, total_score))
+    
     # スコアの解釈
-    if total_score >= 80:
-        interpretation = "非常に高い矯正必要性。早急な対応が推奨されます。"
+    if total_score >= 85:
+        interpretation = "緊急性の高い矯正必要性。早急な対応が強く推奨されます。"
         urgency = "緊急"
-    elif total_score >= 60:
+    elif total_score >= 70:
         interpretation = "高い矯正必要性。できるだけ早い対応が望ましいです。"
         urgency = "高"
-    elif total_score >= 40:
+    elif total_score >= 50:
         interpretation = "中程度の矯正必要性。計画的な対応を検討してください。"
         urgency = "中"
-    else:
+    elif total_score >= 30:
         interpretation = "低〜中程度の矯正必要性。定期的な経過観察をお勧めします。"
         urgency = "低"
+    else:
+        interpretation = "現時点での矯正必要性は低いですが、定期的な評価をお勧めします。"
+        urgency = "最小"
     
     return {
         "total_score": round(total_score),
@@ -162,6 +217,14 @@ def calculate_economic_benefits(age, issues):
         "roi": round(roi, 1),
         "monthly_benefit": int(monthly_benefit)
     }
+
+# 経済的影響データ（新規追加）
+economic_impact = pd.DataFrame({
+    'age_group': ['小児期 (7-12歳)', '青年期 (13-18歳)', '成人期前半 (19-35歳)', '成人期後半 (36-60歳)', '高齢期 (61歳以上)'],
+    'current_cost': [300000, 350000, 400000, 450000, 500000],  # 現在の矯正費用（円）
+    'future_savings': [1500000, 1200000, 900000, 600000, 300000],  # 将来的な医療費削減額（円）
+    'roi': [400, 250, 125, 35, 0]  # 投資収益率（％）
+})
 
 # HTMLレポートを生成する関数
 def generate_html_report(age, gender, issues, report_items, high_risks, necessity_score, economic_benefits, scenarios, additional_notes=""):
@@ -342,6 +405,21 @@ def generate_html_report(age, gender, issues, report_items, high_risks, necessit
                 text-align: center;
                 color: #666;
             }}
+            .evidence-badge {{
+                margin: 10px 0;
+                padding: 10px;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+                border-left: 4px solid #0066cc;
+            }}
+            .evidence-level {{
+                font-weight: bold;
+                font-size: 14px;
+            }}
+            .evidence-type {{
+                font-size: 12px;
+                color: #666;
+            }}
             @media print {{
                 body {{
                     font-size: 12pt;
@@ -476,7 +554,7 @@ def generate_html_report(age, gender, issues, report_items, high_risks, necessit
     
     html += '</table></div>'
     
-    # 各歯列問題の詳細
+    # 各歯列問題の詳細（エビデンスレベル表示を追加）
     for issue in issues:
         filtered = papers[papers['issue'] == issue]
         if not filtered.empty:
@@ -486,15 +564,43 @@ def generate_html_report(age, gender, issues, report_items, high_risks, necessit
             benefit_info = ortho_benefits[ortho_benefits['issue'] == issue].iloc[0]['effect']
             html += f'<div class="benefit"><strong>矯正による改善効果:</strong> {benefit_info}</div>'
             
-            # リスク項目
+            # リスク項目（エビデンスレベル付き）
             for _, row in filtered.iterrows():
                 risk_text = row['risk_description']
                 risk_level = "🔴 高"  # シンプル化のため一律「高」リスクとして表示
+                
                 html += f'<div class="risk-item high-risk"><span style="{risk_styles[risk_level]}">{risk_level}</span> {risk_text}</div>'
                 
-                # 引用情報
+                # エビデンスレベル表示
+                if 'evidence_level' in row:
+                    evidence_level = row['evidence_level']
+                    evidence_color = "#4CAF50" if evidence_level in ["1a", "1b"] else "#FFC107" if evidence_level in ["2a", "2b"] else "#F44336"
+                    study_type = row.get('study_type', '').replace('-', ' ').title()
+                    sample_size = f"(n={row.get('sample_size', '不明')})" if row.get('sample_size', '不明') != '不明' else ""
+                    
+                    html += f'''
+                    <div class="evidence-badge" style="border-left-color: {evidence_color};">
+                        <div class="evidence-level" style="color: {evidence_color};">
+                            エビデンスレベル {evidence_level}: 
+                            {{"1a": "メタ分析/システマティックレビュー", 
+                              "1b": "ランダム化比較試験", 
+                              "2a": "コホート研究", 
+                              "2b": "症例対照研究/臨床試験",
+                              "3": "横断研究/実験研究", 
+                              "4": "症例報告/症例シリーズ", 
+                              "5": "専門家意見/不明"
+                            }}.get(evidence_level, "不明")
+                        </div>
+                        <div class="evidence-type">
+                            {study_type} {sample_size}
+                        </div>
+                    </div>
+                    '''
+                
+                # 論文引用
                 if 'doi' in row:
-                    html += f'<p style="margin-left: 20px; font-size: 0.9em; color: #666;">参考文献: DOI: <a href="https://doi.org/{row["doi"]}" target="_blank">{row["doi"]}</a></p>'
+                    doi = row['doi']
+                    html += f'<p style="margin-left: 20px; font-size: 0.9em; color: #666;">参考文献: DOI: <a href="https://doi.org/{doi}" target="_blank">{doi}</a></p>'
             
             html += '</div>'
     
@@ -533,6 +639,39 @@ with st.sidebar:
     show_future_scenarios = st.checkbox("将来シナリオを表示", value=True)
     show_economic_benefits = st.checkbox("経済的メリットを表示", value=True)
     risk_severity = st.radio("リスク表示レベル", list(risk_thresholds.keys()), index=0)
+    
+    # PubMed更新セクションを追加（新規）
+    st.header("データ更新")
+    with st.expander("PubMedから最新論文を取得"):
+        search_keyword = st.text_input("検索キーワード", "malocclusion OR orthodontic")
+        max_results = st.slider("最大取得件数", 5, 50, 10)
+        days_recent = st.slider("何日前までの論文", 30, 365, 90)
+        
+        if st.button("論文を検索"):
+            with st.spinner("PubMedから論文を検索中..."):
+                # PubMedから論文を検索
+                search_results = fetch_pubmed_studies(search_keyword, max_results, days_recent)
+                if search_results and 'esearchresult' in search_results and 'idlist' in search_results['esearchresult']:
+                    pmid_list = search_results['esearchresult']['idlist']
+                    if pmid_list:
+                        st.success(f"{len(pmid_list)}件の論文が見つかりました")
+                        
+                        # 論文の詳細情報を取得
+                        with st.spinner("論文の詳細情報を取得中..."):
+                            articles = get_pubmed_article_details(pmid_list)
+                            if articles:
+                                # CSVファイルを更新
+                                updated_df = update_papers_csv(articles)
+                                st.success(f"論文データベースを更新しました（合計: {len(updated_df)}件）")
+                                
+                                # データを再読み込み（グローバル変数の更新）
+                                papers = pd.read_csv('papers.csv')
+                            else:
+                                st.error("論文の詳細情報を取得できませんでした")
+                    else:
+                        st.warning("該当する論文が見つかりませんでした")
+                else:
+                    st.error("PubMedの検索に失敗しました")
 
 # 入力フォーム
 with st.form("input_form"):
@@ -542,6 +681,13 @@ with st.form("input_form"):
         gender = st.selectbox('性別', ['男性', '女性', 'その他'])
     with col2:
         issues = st.multiselect('歯列問題', papers['issue'].unique())
+        
+        # エビデンスレベルフィルタを追加（新規）
+        evidence_filter = st.multiselect(
+            'エビデンスレベル',
+            ['1a', '1b', '2a', '2b', '3', '4', '5'],
+            ['1a', '1b', '2a']  # デフォルトは高・中エビデンスのみ
+        )
     
     additional_notes = st.text_area("追加メモ", placeholder="患者の特記事項があれば入力してください")
     submitted = st.form_submit_button("レポート生成")
@@ -559,10 +705,10 @@ if submitted:
         # 現在の日付取得
         today = date.today().strftime("%Y年%m月%d日")
         
-        # 矯正必要性スコアの計算（新規）
+        # 矯正必要性スコアの計算
         necessity_score = calculate_ortho_necessity_score(age, issues)
         
-        # 経済的メリットの計算（新規）
+        # 経済的メリットの計算
         economic_benefits = calculate_economic_benefits(age, issues)
         
         # レポートヘッダー
@@ -573,7 +719,7 @@ if submitted:
         if additional_notes:
             report.append(f"**特記事項:** {additional_notes}")
         
-        # 矯正必要性スコア（新規追加）
+        # 矯正必要性スコア
         report.append("\n## 矯正必要性スコア")
         report.append(f"**総合スコア:** {necessity_score['total_score']}/100")
         report.append(f"**緊急度:** {necessity_score['urgency']}")
@@ -602,7 +748,7 @@ if submitted:
                 # 高齢の場合
                 report.append("**注意:** 現在の年齢では標準的な矯正治療に制限がある可能性があります。専門医との詳細な相談を推奨します。")
         
-        # 経済的メリット（新規追加）
+        # 経済的メリット
         if show_economic_benefits:
             report.append("\n## 歯列矯正の経済的メリット")
             report.append(f"**現在の矯正コスト:** ¥{economic_benefits['current_cost']:,}")
@@ -611,7 +757,7 @@ if submitted:
             report.append(f"**投資収益率:** {economic_benefits['roi']}%")
             report.append(f"**月あたりの医療費削減効果:** 約¥{economic_benefits['monthly_benefit']:,}")
         
-        # 将来シナリオ比較（新規追加）
+        # 将来シナリオ比較
         if show_future_scenarios:
             report.append("\n## 将来シナリオ比較")
             report.append("矯正治療を受けた場合と受けなかった場合の将来予測：")
@@ -623,19 +769,40 @@ if submitted:
         
         report.append("\n## 評価結果サマリー")
         
-        # 各歯列問題のリスク評価
+        # 各歯列問題のリスク評価（エビデンスレベルの表示機能追加）
         high_risks = []
         
         for issue in issues:
             filtered = papers[papers['issue'] == issue]
+            
+            # エビデンスレベルでフィルタリング（新規）
+            if 'evidence_level' in filtered.columns and evidence_filter:
+                filtered = filtered[filtered['evidence_level'].isin(evidence_filter)]
+            
             if not filtered.empty:
                 report.append(f"\n## {issue}のリスク評価")
+                
+                # Streamlit表示用のサブヘッダー
+                st.subheader(f"{issue}のリスク評価")
                 
                 # 矯正による改善効果の追加
                 benefit_info = ortho_benefits[ortho_benefits['issue'] == issue].iloc[0]['effect']
                 report.append(f"**矯正による改善効果:** {benefit_info}")
                 
+                # Streamlit表示用の情報ボックス
+                st.info(f"矯正による改善効果: {benefit_info}")
+                
+                # 各論文の情報表示
                 for _, row in filtered.iterrows():
+                    # エビデンスレベルの表示（新規：Streamlit UI用）
+                    if 'evidence_level' in row:
+                        evidence_html = render_evidence_level_badge(
+                            row.get('evidence_level', '5'),
+                            row.get('study_type', ''),
+                            row.get('sample_size', '')
+                        )
+                        st.markdown(evidence_html, unsafe_allow_html=True)
+                    
                     # リスク値の抽出 (例: "42%上昇" から 42 を抽出)
                     risk_text = row['risk_description']
                     try:
@@ -668,10 +835,25 @@ if submitted:
                         if risk_value > risk_threshold:
                             high_risks.append(f"{issue}: {risk_text}")
                         
+                        # レポート用テキスト追加
                         report.append(f"- **{risk_level}**: {risk_text}")
                         
-                        if include_citations:
+                        # エビデンスレベル情報を追加（新規：レポート用）
+                        if 'evidence_level' in row:
+                            evidence_text = f"エビデンスレベル: {row['evidence_level']}"
+                            if 'study_type' in row:
+                                evidence_text += f" ({row['study_type'].replace('-', ' ').title()})"
+                            report.append(f"  - {evidence_text}")
+                        
+                        if include_citations and 'doi' in row:
                             report.append(f"  - 参考文献: DOI: [{row['doi']}](https://doi.org/{row['doi']})")
+                        
+                        # リスク情報をStreamlit上に表示
+                        st.markdown(f"**{risk_level}**: {risk_text}")
+                        
+                        # 引用情報をStreamlit上に表示
+                        if include_citations and 'doi' in row:
+                            st.markdown(f"参考文献: DOI: [{row['doi']}](https://doi.org/{row['doi']})")
         
         # 高リスク項目のサマリー
         if high_risks:
@@ -679,7 +861,9 @@ if submitted:
             for risk in high_risks:
                 report.insert(5, f"- {risk}")
         
-        # レポート表示
+        # レポート全文を表示
+        st.markdown("---")
+        st.subheader("レポート全文")
         st.markdown("\n".join(report))
         
         # HTML版レポート生成
