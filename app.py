@@ -556,20 +556,20 @@ def generate_html_report(age, gender, issues, report_items, high_risks, necessit
     html += '</table></div>'
     
     # 各歯列問題の詳細（エビデンスレベル表示を追加）
-    for issue in issues:
-        filtered = papers[papers['issue'] == issue]
-        if not filtered.empty:
-            html += f'<div class="section"><h2>{issue}のリスク評価</h2>'
-            
-            # 矯正による改善効果の追加（修正版）
-if show_recommendations:
-    benefit_df = ortho_benefits[ortho_benefits['issue'] == issue]
-    if not benefit_df.empty:
-        benefit_info = benefit_df.iloc[0]['effect']
-        report.append(f"**矯正による改善効果:** {benefit_info}")
-    else:
-        # 「その他の歯列問題」などのデフォルトメッセージ
-        report.append(f"**矯正による改善効果:** この歯列問題には個別の研究に基づいた具体的なデータが利用できません。専門医との詳細な相談をお勧めします。")
+for issue in issues:
+    filtered = papers[papers['issue'] == issue]
+    if not filtered.empty:
+        html += f'<div class="section"><h2>{issue}のリスク評価</h2>'
+        
+        # 矯正による改善効果
+        if show_recommendations:
+            benefit_df = ortho_benefits[ortho_benefits['issue'] == issue]
+            if not benefit_df.empty:
+                benefit_info = benefit_df.iloc[0]['effect']
+                html += f'<div class="benefit"><strong>矯正による改善効果:</strong> {benefit_info}</div>'
+            else:
+                # 「その他の歯列問題」などのデフォルトメッセージ
+                html += f'<div class="benefit"><strong>矯正による改善効果:</strong> この歯列問題には個別の研究に基づいた具体的なデータが利用できません。専門医との詳細な相談をお勧めします。</div>'
             
             # リスク項目（エビデンスレベル付き）
             for _, row in filtered.iterrows():
