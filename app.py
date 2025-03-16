@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import re
 
 # 論文データ読み込み
 papers = pd.read_csv('papers.csv')
@@ -61,7 +62,12 @@ if submitted:
                     # リスク値の抽出 (例: "42%上昇" から 42 を抽出)
                     risk_text = row['risk_description']
                     try:
-                        risk_value = int(''.join(filter(str.isdigit, risk_text)))
+                        # 数値を抽出（より堅牢な方法）
+                        numbers = re.findall(r'\d+\.?\d*', risk_text)
+                        if numbers:
+                            risk_value = float(numbers[0])
+                        else:
+                            risk_value = 0
                     except:
                         risk_value = 0
                     
@@ -90,13 +96,32 @@ if submitted:
             st.subheader("リスク比較グラフ")
             
             # 簡易的なグラフデータ作成
-            chart_data = pd.DataFrame({
-                '問題': papers[papers['issue'].isin(issues)]['issue'],
-                'リスク値': papers[papers['issue'].isin(issues)]['risk_description'].str.extract('(\d+)').astype(float)
-            })
+            risk_values = []
+            issue_names = []
             
-            if not chart_data.empty:
+            for issue in issues:
+                filtered = papers[papers['issue'] == issue]
+                if not filtered.empty:
+                    for _, row in filtered.iterrows():
+                        risk_text = row['risk_description']
+                        # 数値を抽出（より堅牢な方法）
+                        numbers = re.findall(r'\d+\.?\d*', risk_text)
+                        if numbers:
+                            try:
+                                risk_value = float(numbers[0])
+                                risk_values.append(risk_value)
+                                issue_names.append(issue)
+                            except:
+                                pass
+            
+            if risk_values and issue_names:
+                chart_data = pd.DataFrame({
+                    '問題': issue_names,
+                    'リスク値': risk_values
+                })
                 st.bar_chart(chart_data.set_index('問題'))
+            else:
+                st.info("グラフ表示に適したデータがありません")
         
         # ダウンロードボタン
         st.download_button("レポートをダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
