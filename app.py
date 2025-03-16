@@ -4,61 +4,6 @@ import numpy as np
 from datetime import date
 import re
 import base64
-from fpdf import FPDF
-import tempfile
-import os
-
-# PDFレポート生成クラス
-class ReportPDF(FPDF):
-    def __init__(self):
-        super().__init__()
-        self.set_auto_page_break(auto=True, margin=15)
-        self.add_page()
-        self.set_font("Arial", size=10)
-        
-    def header(self):
-        # ヘッダーに歯科ロゴと日付を追加
-        self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, '歯科エビデンス生成システム', 0, 1, 'C')
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 5, f'作成日: {date.today().strftime("%Y年%m月%d日")}', 0, 1, 'R')
-        self.ln(5)
-        
-    def footer(self):
-        # フッターにページ番号を追加
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'ページ {self.page_no()}', 0, 0, 'C')
-    
-    def chapter_title(self, title):
-        # セクションタイトル
-        self.set_font('Arial', 'B', 12)
-        self.set_fill_color(200, 220, 255)
-        self.cell(0, 6, title, 0, 1, 'L', 1)
-        self.ln(4)
-        
-    def chapter_body(self, body):
-        # 本文テキスト
-        self.set_font('Arial', '', 10)
-        self.multi_cell(0, 5, body)
-        self.ln()
-        
-    def print_risk_item(self, risk, level="低"):
-        # リスク項目を出力（色付き）
-        level_colors = {
-            "高": (255, 100, 100),
-            "中": (255, 200, 100),
-            "低": (100, 200, 100)
-        }
-        color = level_colors.get(level, (0, 0, 0))
-        
-        self.set_text_color(*color)
-        self.set_font('Arial', 'B', 10)
-        self.cell(15, 5, f"[{level}]", 0, 0)
-        self.set_text_color(0, 0, 0)
-        self.set_font('Arial', '', 10)
-        self.multi_cell(0, 5, risk)
-        self.ln(2)
 
 # 論文データ読み込み
 papers = pd.read_csv('papers.csv')
@@ -102,104 +47,205 @@ timing_benefits = pd.DataFrame({
     'recommendation_level': ['最適', '推奨', '適応', '条件付き推奨', '専門医評価必須']
 })
 
-# PDFをダウンロード可能な形式に変換する関数
-def create_download_link(pdf_bytes, filename):
-    b64 = base64.b64encode(pdf_bytes).decode()
-    return f'<a href="data:application/pdf;base64,{b64}" download="{filename}">PDFをダウンロード</a>'
-
-# レポート内容からPDFを生成する関数
-def generate_pdf(report_data, age, gender, issues, high_risks):
-    pdf = ReportPDF()
+# HTMLレポートを生成する関数
+def generate_html_report(age, gender, issues, report_items, high_risks, additional_notes=""):
+    today = date.today().strftime("%Y年%m月%d日")
     
-    # タイトルページ
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, '歯科リスク評価レポート', 0, 1, 'C')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, f'患者情報: {age}歳, {gender}', 0, 1, 'C')
-    pdf.cell(0, 10, f'評価日: {date.today().strftime("%Y年%m月%d日")}', 0, 1, 'C')
+    # リスクレベルに応じたスタイル
+    risk_styles = {
+        '🔴 高': 'color: #ff4444; font-weight: bold;',
+        '🟡 中': 'color: #ffbb33; font-weight: bold;',
+        '🟢 低': 'color: #00C851; font-weight: bold;'
+    }
     
-    # 高リスク項目サマリー
+    # HTMLヘッダー
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>歯科リスク評価レポート</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            h1, h2, h3 {{
+                color: #0066cc;
+                border-bottom: 1px solid #ddd;
+                padding-bottom: 5px;
+            }}
+            h1 {{
+                text-align: center;
+                border-bottom: 2px solid #0066cc;
+            }}
+            .header-info {{
+                text-align: center;
+                margin-bottom: 30px;
+            }}
+            .section {{
+                margin: 25px 0;
+                padding: 0 15px;
+            }}
+            .risk-item {{
+                margin: 10px 0;
+                padding: 10px;
+                border-left: 3px solid #ddd;
+            }}
+            .high-risk {{
+                background-color: #ffeeee;
+                border-left: 3px solid #ff4444;
+            }}
+            .warning {{
+                background-color: #fff3cd;
+                padding: 10px;
+                border-left: 4px solid #ffc107;
+                margin: 15px 0;
+            }}
+            .benefit {{
+                background-color: #e8f4f8;
+                padding: 10px;
+                border-left: 4px solid #0099cc;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+            }}
+            th, td {{
+                padding: 8px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }}
+            th {{
+                background-color: #f2f2f2;
+            }}
+            .footer {{
+                margin-top: 40px;
+                border-top: 1px solid #ddd;
+                padding-top: 10px;
+                font-size: 0.8em;
+                text-align: center;
+                color: #666;
+            }}
+            @media print {{
+                body {{
+                    font-size: 12pt;
+                }}
+                .no-print {{
+                    display: none;
+                }}
+                h1, h2, h3 {{
+                    page-break-after: avoid;
+                }}
+                .section {{
+                    page-break-inside: avoid;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>歯科リスク評価レポート</h1>
+        <div class="header-info">
+            <p><strong>生成日:</strong> {today}</p>
+            <p><strong>患者情報:</strong> {age}歳, {gender}</p>
+    """
+    
+    # 追加メモがあれば追加
+    if additional_notes:
+        html += f'<p><strong>特記事項:</strong> {additional_notes}</p>'
+    
+    html += '</div>'
+    
+    # 高リスク項目のサマリー
     if high_risks:
-        pdf.add_page()
-        pdf.chapter_title('注意すべき高リスク項目')
+        html += '''
+        <div class="section">
+            <h2>注意すべき高リスク項目</h2>
+        '''
         for risk in high_risks:
-            pdf.print_risk_item(risk, "高")
+            html += f'<div class="risk-item high-risk">{risk}</div>'
+        html += '</div>'
     
-    # 矯正タイミング評価
-    pdf.add_page()
-    pdf.chapter_title('矯正タイミング評価')
+    # レポート本文
+    for section in report_items:
+        if section.startswith('# '):
+            # メインタイトルはスキップ（すでに上部に表示済み）
+            continue
+        elif section.startswith('## '):
+            # セクションタイトル
+            title = section.replace('## ', '')
+            html += f'<div class="section"><h2>{title}</h2>'
+        elif section.startswith('### '):
+            # サブセクションタイトル
+            title = section.replace('### ', '')
+            html += f'<h3>{title}</h3>'
+        elif section.startswith('**⚠️ 矯正タイミング警告:**'):
+            # 警告メッセージ
+            warning = section.replace('**⚠️ 矯正タイミング警告:**', '').strip()
+            html += f'<div class="warning"><strong>⚠️ 矯正タイミング警告:</strong>{warning}</div>'
+        elif section.startswith('**矯正による改善効果:**'):
+            # 改善効果
+            benefit = section.replace('**矯正による改善効果:**', '').strip()
+            html += f'<div class="benefit"><strong>矯正による改善効果:</strong>{benefit}</div>'
+        elif section.startswith('- **🔴 高**:') or section.startswith('- **🟡 中**:') or section.startswith('- **🟢 低**:'):
+            # リスク項目
+            for key, style in risk_styles.items():
+                if section.startswith(f'- **{key}**:'):
+                    risk_text = section.replace(f'- **{key}**:', '').strip()
+                    html += f'<div class="risk-item"><span style="{style}">{key[0]}</span>{risk_text}</div>'
+                    break
+        elif section.startswith('- **') and ('年後' in section or '歳時点' in section):
+            # 将来リスク項目
+            html += f'<div class="risk-item high-risk">{section.replace("- ", "")}</div>'
+        elif section.startswith('**現在の年齢グループ:**') or section.startswith('**推奨レベル:**') or section.startswith('**メリット:**'):
+            # 年齢グループ情報
+            html += f'<p>{section}</p>'
+        elif section.startswith('  - 参考文献:'):
+            # 引用情報（インデント）
+            citation = section.replace('  - 参考文献:', '').strip()
+            doi_match = re.search(r'\[(.*?)\]\((.*?)\)', citation)
+            if doi_match:
+                doi, url = doi_match.groups()
+                html += f'<p style="margin-left: 20px; font-size: 0.9em; color: #666;">参考文献: DOI: <a href="{url}" target="_blank">{doi}</a></p>'
+            else:
+                html += f'<p style="margin-left: 20px; font-size: 0.9em; color: #666;">{citation}</p>'
+        else:
+            # その他の通常テキスト
+            if section.strip():
+                # 空行でなければ表示
+                html += f'<p>{section}</p>'
     
-    # 患者の年齢に基づいたリスク評価
-    applicable_thresholds = ortho_age_risks[ortho_age_risks['age_threshold'] >= age]
+        # セクション終了タグ（h2タグの後に開始された場合）
+        if section.startswith('## '):
+            html += '</div>'
     
-    if not applicable_thresholds.empty:
-        next_threshold = applicable_thresholds.iloc[0]
-        pdf.set_text_color(255, 0, 0)  # 赤色で警告
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 6, '⚠️ 矯正タイミング警告:', 0, 1)
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 5, next_threshold['description'])
-        pdf.ln(5)
-        
-        # 年齢グループに基づいた推奨情報
-        age_group_idx = min(len(timing_benefits) - 1, age // 13)
-        benefit_info = timing_benefits.iloc[age_group_idx]
-        
-        pdf.set_font('Arial', 'B', 11)
-        pdf.cell(0, 6, f"現在の年齢グループ: {benefit_info['age_group']}", 0, 1)
-        pdf.cell(0, 6, f"推奨レベル: {benefit_info['recommendation_level']}", 0, 1)
-        pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 5, f"メリット: {benefit_info['benefit']}")
-    else:
-        # 高齢の場合
-        pdf.chapter_body("注意: 現在の年齢では標準的な矯正治療に制限がある可能性があります。専門医との詳細な相談を推奨します。")
+    # フッター
+    html += f'''
+        <div class="footer">
+            歯科エビデンス生成システム - レポート生成日: {today}
+        </div>
+        <div class="no-print" style="text-align: center; margin-top: 30px;">
+            <button onclick="window.print();" style="padding: 10px 20px; background-color: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                印刷する / PDFとして保存
+            </button>
+        </div>
+    </body>
+    </html>
+    '''
     
-    # 各歯列問題の詳細リスク評価
-    for issue in issues:
-        pdf.add_page()
-        pdf.chapter_title(f'{issue}のリスク評価')
-        
-        # 矯正による改善効果
-        benefit_info = ortho_benefits[ortho_benefits['issue'] == issue].iloc[0]['effect']
-        pdf.set_font('Arial', 'B', 11)
-        pdf.cell(0, 6, '矯正による改善効果:', 0, 1)
-        pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 5, benefit_info)
-        pdf.ln(5)
-        
-        # 関連リスク
-        filtered = papers[papers['issue'] == issue]
-        for _, row in filtered.iterrows():
-            risk_text = row['risk_description']
-            try:
-                numbers = re.findall(r'\d+\.?\d*', risk_text)
-                risk_value = float(numbers[0]) if numbers else 0
-            except:
-                risk_value = 0
-            
-            # リスクレベル
-            risk_level = "高" if risk_value > 40 else "中" if risk_value > 20 else "低"
-            pdf.print_risk_item(risk_text, risk_level)
-            
-            # 引用情報
-            pdf.set_font('Arial', 'I', 8)
-            pdf.cell(0, 5, f"参考文献: DOI: {row['doi']}", 0, 1)
-            pdf.ln(2)
-    
-    # 矯正しない場合の将来リスク
-    pdf.add_page()
-    pdf.chapter_title('矯正しない場合の長期リスク')
-    
-    future_risks = []
-    for _, risk in ortho_age_risks.iterrows():
-        if risk['age_threshold'] > age:
-            years_until = risk['age_threshold'] - age
-            future_risk = f"{years_until}年後 ({risk['age_threshold']}歳時点): {risk['description']}"
-            pdf.print_risk_item(future_risk, "高" if risk['tooth_loss_risk'] > 30 else "中")
-    
-    # 生成したPDFを返す
-    return pdf.output(dest='S').encode('latin1')  # バイト配列として出力
+    return html
+
+# HTMLをダウンロード可能にする関数
+def get_html_download_link(html, filename):
+    b64 = base64.b64encode(html.encode()).decode()
+    href = f'<a href="data:text/html;base64,{b64}" download="{filename}" style="display: inline-block; padding: 10px 15px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 4px; margin: 10px 0;">HTMLレポートをダウンロード</a>'
+    return href
 
 # タイトル表示
 st.title('🦷 歯科エビデンス生成システム')
@@ -422,13 +468,20 @@ if submitted:
             })
             st.table(timing_display)
         
-        # PDF生成とダウンロードリンク
-        try:
-            pdf_bytes = generate_pdf(report, age, gender, issues, high_risks)
-            st.markdown(create_download_link(pdf_bytes, f"歯科リスク評価_{today}.pdf"), unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"PDFの生成中にエラーが発生しました: {str(e)}")
-            st.info("代わりにマークダウン形式でダウンロードできます")
+        # HTML版レポート生成
+        html_report = generate_html_report(age, gender, issues, report, high_risks, additional_notes)
         
-        # マークダウンのダウンロードボタン（バックアップとして残す）
-        st.download_button("レポートをマークダウンでダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
+        # ダウンロードボタン
+        st.markdown("<h3>レポートのダウンロード</h3>", unsafe_allow_html=True)
+        st.write("以下のいずれかの形式でレポートをダウンロードできます：")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # HTML形式（印刷用）
+            st.markdown(get_html_download_link(html_report, f"歯科リスク評価_{today}.html"), unsafe_allow_html=True)
+            st.write("※HTMLファイルをブラウザで開き、印刷機能からPDFとして保存できます")
+        
+        with col2:
+            # マークダウン形式
+            st.download_button("マークダウン形式でダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
