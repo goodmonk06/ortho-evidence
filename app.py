@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 from datetime import date
 import re
-import matplotlib.pyplot as plt
-import altair as alt
 
 # 論文データ読み込み
 papers = pd.read_csv('papers.csv')
@@ -44,7 +41,7 @@ timing_benefits = pd.DataFrame({
         '顎の成長がまだ続いており、比較的効率的な矯正が可能。将来的な歯列問題を75%予防可能。',
         '歯の移動は可能だが、治療期間が長くなる傾向。将来的な歯列問題を60%予防可能。',
         '歯周組織の状態によっては制限あり。治療期間が50%延長。将来的な歯列問題を40%予防可能。',
-        '歯周病や骨粗鬆症などの影響で治療オプションが制限される可能性。治療期間が2倍に延長。'
+        '専門医評価必須。歯周病や骨粗鬆症などの影響で治療オプションが制限される可能性。治療期間が2倍に延長。'
     ],
     'recommendation_level': ['最適', '推奨', '適応', '条件付き推奨', '専門医評価必須']
 })
@@ -193,7 +190,7 @@ if submitted:
         # レポート表示
         st.markdown("\n".join(report))
         
-        # グラフ表示
+        # グラフ表示（シンプル化）
         if show_charts and issues:
             st.subheader("リスク比較グラフ")
             
@@ -221,89 +218,54 @@ if submitted:
                     '問題': issue_names,
                     'リスク値': risk_values
                 })
-                
-                # Ploty グラフ（より見やすいグラフ表示）
-                fig = px.bar(chart_data, x='問題', y='リスク値', 
-                             color='リスク値',
-                             color_continuous_scale=['green', 'yellow', 'red'],
-                             title='歯列問題別リスク値比較')
-                st.plotly_chart(fig)
+                st.bar_chart(chart_data.set_index('問題'))
             else:
                 st.info("グラフ表示に適したデータがありません")
                 
-            # 年齢による歯の喪失リスクグラフ（新規追加）
+            # 年齢による歯の喪失リスクテーブル（グラフの代わり）
             if show_ortho_timing:
                 st.subheader("年齢による歯の喪失リスク")
                 
+                # 年齢リスクテーブル作成
                 age_risk_data = pd.DataFrame({
                     '年齢閾値': ortho_age_risks['age_threshold'],
                     '歯喪失リスク(%)': ortho_age_risks['tooth_loss_risk']
                 })
                 
-                # 患者年齢のマーカー用データポイント
-                patient_marker = pd.DataFrame({
-                    '年齢閾値': [age],
-                    '歯喪失リスク(%)': [np.interp(age, 
-                                            ortho_age_risks['age_threshold'], 
-                                            ortho_age_risks['tooth_loss_risk'])]
+                # 患者の現在年齢の予測リスクを計算
+                current_risk = np.interp(age, 
+                                         ortho_age_risks['age_threshold'], 
+                                         ortho_age_risks['tooth_loss_risk'])
+                
+                # 現在の患者リスクを追加
+                patient_row = pd.DataFrame({
+                    '年齢閾値': [f"現在の患者（{age}歳）"],
+                    '歯喪失リスク(%)': [f"{current_risk:.1f}"]
                 })
                 
-                # Altairでグラフ作成
-                base = alt.Chart(age_risk_data).mark_line(color='red').encode(
-                    x=alt.X('年齢閾値:Q', title='年齢'),
-                    y=alt.Y('歯喪失リスク(%):Q', title='歯喪失リスク(%)'),
-                    tooltip=['年齢閾値:Q', '歯喪失リスク(%):Q']
-                )
+                # テーブル表示
+                st.write("📊 **年齢と歯喪失リスクの関係**")
+                st.write(age_risk_data)
+                st.write("**患者の現在リスク:**")
+                st.write(patient_row)
                 
-                point = alt.Chart(patient_marker).mark_circle(size=100, color='blue').encode(
-                    x='年齢閾値:Q',
-                    y='歯喪失リスク(%):Q',
-                    tooltip=['年齢閾値:Q', '歯喪失リスク(%):Q']
-                )
-                
-                text = point.mark_text(
-                    align='left',
-                    baseline='middle',
-                    dx=15,
-                    fontSize=14
-                ).encode(
-                    text=alt.Text('年齢閾値:Q', format='.0f', title='現在の年齢')
-                )
-                
-                # グラフ表示
-                risk_chart = (base + point + text).properties(
-                    width=600,
-                    height=400,
-                    title='年齢と歯喪失リスクの関係 (現在の位置をマーク)'
-                ).configure_title(
-                    fontSize=20
-                )
-                
-                st.altair_chart(risk_chart, use_container_width=True)
-        
-        # 矯正メリットグラフ（新規追加）
+        # 矯正メリット情報（グラフの代わりにテーブル表示）
         if show_recommendations and show_charts:
             st.subheader("年齢別矯正治療のメリット比較")
             
-            # タイミングメリットデータ準備
-            timing_data = pd.DataFrame({
-                '年齢グループ': timing_benefits['age_group'],
-                '治療効率': [95, 75, 60, 40, 25],  # 数値化したメリット指標
-                '推奨レベル': [5, 4, 3, 2, 1]      # 数値化した推奨レベル
-            })
-            
             # 現在の年齢グループをハイライト
             age_group_idx = min(len(timing_benefits) - 1, age // 13)
-            highlight = [False] * len(timing_data)
-            highlight[age_group_idx] = True
-            timing_data['ハイライト'] = highlight
             
-            # Plotly グラフ
-            fig = px.bar(timing_data, x='年齢グループ', y='治療効率',
-                         color='ハイライト',
-                         color_discrete_map={True: 'red', False: 'blue'},
-                         title='年齢グループ別矯正治療効率')
-            st.plotly_chart(fig)
+            # 現在の年齢グループを強調表示
+            st.write(f"**現在の年齢グループ**: {timing_benefits.iloc[age_group_idx]['age_group']} - {timing_benefits.iloc[age_group_idx]['recommendation_level']}")
+            
+            # タイミングメリットデータをテーブル表示
+            timing_display = pd.DataFrame({
+                '年齢グループ': timing_benefits['age_group'],
+                '推奨レベル': timing_benefits['recommendation_level'],
+                'メリット': timing_benefits['benefit']
+            })
+            st.table(timing_display)
         
         # ダウンロードボタン
         st.download_button("レポートをダウンロード", "\n".join(report), f"歯科リスク評価_{today}.md")
